@@ -7,6 +7,9 @@ fn run_day<A, B>(day: usize, f: fn(&Path) -> Result<(A, Option<B>)>) -> Result<(
 
 #[test]
 fn test_day1() -> Result<()> {
-    assert_eq!(run_day(1, advent_of_code_2022::day1::main)?, (0, None));
+    assert_eq!(
+        run_day(1, advent_of_code_2022::day1::main)?,
+        (71506, Some(209603))
+    );
     Ok(())
 }
