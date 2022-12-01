@@ -5,17 +5,13 @@ use std::path::Path;
 
 pub fn main(path: &Path) -> Result<(usize, Option<usize>)> {
     let file = File::open(path)?;
-    let calories = io::BufReader::new(file)
-        .lines()
-        .map(|lr| Ok(lr?.parse::<usize>().ok()))
-        .collect::<Result<Vec<Option<usize>>>>()?;
-
     let mut calories_by_elf = vec![0];
-    for item_calories in calories.iter().copied() {
-        match item_calories {
-            Some(c) => *calories_by_elf.last_mut().unwrap() += c,
-            None => calories_by_elf.push(0),
-        }
+    for line in io::BufReader::new(file).lines() {
+        let Some(calories) = line?.parse::<usize>().ok() else {
+            calories_by_elf.push(0);
+            continue
+        };
+        *calories_by_elf.last_mut().unwrap() += calories;
     }
 
     calories_by_elf.sort();
