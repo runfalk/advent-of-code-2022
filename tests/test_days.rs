@@ -40,3 +40,12 @@ fn test_day4() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn test_day5() -> Result<()> {
+    assert_eq!(
+        run_day(5, advent_of_code_2022::day5::main)?,
+        ("TLNGFGMFN".to_owned(), Some("FGLQJCMBD".to_owned()))
+    );
+    Ok(())
+}
