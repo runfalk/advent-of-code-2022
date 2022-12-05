@@ -1,6 +1,6 @@
-Advent of code 2021
+Advent of code 2022  
 ===================
-These are my solutions for the problems in Advent of Code 2021.
+These are my solutions for the problems in Advent of Code 2022. 
 
 
 Answers
