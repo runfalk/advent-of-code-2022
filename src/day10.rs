@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Result};
-use std::convert::TryInto;
 use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
@@ -25,52 +24,39 @@ impl FromStr for Op {
     }
 }
 
-fn part_a(ops: &[Op]) -> isize {
-    let mut x = 1;
-    let mut cycle = 0;
-    let mut output = 0;
-    let mut key_cycles = vec![220, 180, 140, 100, 60, 20];
-
+fn compute_all_x(ops: &[Op]) -> Vec<isize> {
+    let mut x = vec![1];
     for op in ops {
-        let (next_x, next_cycle) = match op {
-            Op::Noop => (x, cycle + 1),
-            Op::Addx(n) => (x + n, cycle + 2),
-        };
-
-        let Some(key_cycle) = key_cycles.last().copied() else {
-            break
-        };
-        if next_cycle >= key_cycle {
-            output += key_cycle * x;
-            key_cycles.pop();
+        let cx = x.last().copied().unwrap();
+        match op {
+            Op::Noop => x.push(cx),
+            Op::Addx(n) => {
+                x.push(cx);
+                x.push(cx + n);
+            }
         }
-
-        x = next_x;
-        cycle = next_cycle;
     }
-    output
+    x
+}
+
+fn part_a(ops: &[Op]) -> isize {
+    let key_cycles = [20, 60, 100, 140, 180, 220];
+    let x = compute_all_x(ops);
+    key_cycles
+        .into_iter()
+        .map(|c| (c as isize) * x[c - 1])
+        .sum()
 }
 
 fn part_b(ops: &[Op]) -> String {
     const WIDTH: usize = 40;
     let mut crt = [false; WIDTH * 6];
-    let mut cycle = 0;
-    let mut x = 1;
-
-    for op in ops {
-        match op {
-            Op::Noop => {
-                crt[cycle] = (x - 1..=x + 1).contains(&(cycle % WIDTH).try_into().unwrap());
-                cycle += 1;
-            }
-            Op::Addx(n) => {
-                crt[cycle] = (x - 1..=x + 1).contains(&(cycle % WIDTH).try_into().unwrap());
-                cycle += 1;
-                crt[cycle] = (x - 1..=x + 1).contains(&(cycle % WIDTH).try_into().unwrap());
-                cycle += 1;
-                x += n;
-            }
-        };
+    for ((cycle, x), pixel) in (0..WIDTH)
+        .cycle()
+        .zip(compute_all_x(ops))
+        .zip(crt.iter_mut())
+    {
+        *pixel = (x - 1..=x + 1).contains(&(cycle as isize));
     }
 
     crt.chunks_exact(WIDTH)
