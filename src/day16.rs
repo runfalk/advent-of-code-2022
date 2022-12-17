@@ -102,17 +102,64 @@ fn valve_cost_map(
     Ok(cost_map)
 }
 
-fn part_a(cost_map: &HashMap<String, HashMap<String, ValveInfo>>) -> Result<usize> {
-    let time_limit = 30usize;
-
-    let mut to_visit = VecDeque::new();
-    to_visit.push_back((vec![FIRST_VALVE.to_string()], time_limit, 0));
+fn find_max_pressure(
+    cost_map: &HashMap<String, HashMap<String, ValveInfo>>,
+    time_limit: usize,
+    blacklist: &HashSet<String>,
+) -> Result<usize> {
+    let mut to_visit = Vec::new();
+    to_visit.push((vec![FIRST_VALVE.to_string()], time_limit, 0));
     let mut max_pressure = 0;
-    while let Some((path, time_remaining, acc_pressure)) = to_visit.pop_front() {
+    while let Some((path, time_remaining, acc_pressure)) = to_visit.pop() {
         let curr_valve_name = path.last().unwrap();
+        let Some(valve_info) = cost_map.get(curr_valve_name) else {
+            return Err(anyhow!("Unknown valve {:?}", curr_valve_name));
+        };
         max_pressure = max_pressure.max(acc_pressure);
 
-        for (next_valve, ValveInfo { cost, flow_rate }) in cost_map.get(curr_valve_name).unwrap() {
+        // Figure out if this path has potential to beat the best known path. If not, prune it
+        let max_untapped_pressure = valve_info
+            .iter()
+            .filter(|(k, _)| !path.contains(k))
+            .map(|(_, v)| v.flow_rate * time_remaining.saturating_sub(v.cost + 1))
+            .sum::<usize>();
+        if acc_pressure + max_untapped_pressure < max_pressure {
+            continue;
+        }
+
+        for (next_valve, ValveInfo { cost, flow_rate }) in valve_info {
+            if path.contains(next_valve) || blacklist.contains(next_valve.as_str()) {
+                continue;
+            }
+            let Some(next_time_remaining) = time_remaining.checked_sub(cost + 1) else {
+                continue;
+            };
+            let mut new_path = path.clone();
+            new_path.push(next_valve.clone());
+            to_visit.push((
+                new_path,
+                next_time_remaining,
+                acc_pressure + next_time_remaining * flow_rate,
+            ));
+        }
+    }
+    Ok(max_pressure)
+}
+
+fn explore_paths(
+    cost_map: &HashMap<String, HashMap<String, ValveInfo>>,
+    time_limit: usize,
+) -> Result<Vec<(usize, HashSet<String>)>> {
+    let mut to_visit = Vec::new();
+    to_visit.push((vec![FIRST_VALVE.to_string()], time_limit, 0));
+    let mut paths = vec![];
+    while let Some((path, time_remaining, acc_pressure)) = to_visit.pop() {
+        let curr_valve_name = path.last().unwrap();
+        let Some(valve_info) = cost_map.get(curr_valve_name) else {
+            return Err(anyhow!("Unknown valve {:?}", curr_valve_name));
+        };
+        paths.push((acc_pressure, path.iter().cloned().collect()));
+        for (next_valve, ValveInfo { cost, flow_rate }) in valve_info {
             if path.contains(next_valve) {
                 continue;
             }
@@ -121,14 +168,30 @@ fn part_a(cost_map: &HashMap<String, HashMap<String, ValveInfo>>) -> Result<usiz
             };
             let mut new_path = path.clone();
             new_path.push(next_valve.clone());
-            to_visit.push_back((
+            to_visit.push((
                 new_path,
                 next_time_remaining,
                 acc_pressure + next_time_remaining * flow_rate,
             ));
         }
     }
-    Ok(max_pressure)
+    Ok(paths)
+}
+
+fn part_a(cost_map: &HashMap<String, HashMap<String, ValveInfo>>) -> Result<usize> {
+    find_max_pressure(cost_map, 30, &HashSet::new())
+}
+
+fn part_b(cost_map: &HashMap<String, HashMap<String, ValveInfo>>) -> Result<usize> {
+    // This only works because the shorter time limit prunes the search space for us. It's still
+    // way slower than what I would like, but my brain is fried at this point.
+    let time_limit = 26;
+    let mut best_pressure = 0;
+    for (path_pressure, path_valves) in explore_paths(cost_map, time_limit)? {
+        let remainder_pressure = find_max_pressure(cost_map, time_limit, &path_valves)?;
+        best_pressure = best_pressure.max(path_pressure + remainder_pressure);
+    }
+    Ok(best_pressure)
 }
 
 pub fn main(path: &Path) -> Result<(usize, Option<usize>)> {
@@ -140,7 +203,7 @@ pub fn main(path: &Path) -> Result<(usize, Option<usize>)> {
         })
         .collect::<Result<HashMap<String, ValveSpec>>>()?;
     let valve_costs = valve_cost_map(&valves)?;
-    Ok((part_a(&valve_costs)?, None))
+    Ok((part_a(&valve_costs)?, Some(part_b(&valve_costs)?)))
 }
 
 #[cfg(test)]
@@ -173,6 +236,12 @@ mod tests {
     #[test]
     fn test_example_a() -> Result<()> {
         assert_eq!(part_a(&example_valves())?, 1651);
+        Ok(())
+    }
+
+    #[test]
+    fn test_example_b() -> Result<()> {
+        assert_eq!(part_b(&example_valves())?, 1707);
         Ok(())
     }
 }
