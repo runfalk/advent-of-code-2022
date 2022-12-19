@@ -178,3 +178,14 @@ fn test_day18() -> Result<()> {
     );
     Ok(())
 }
+
+// Needs to be ignored because my solution is slow :(
+#[test]
+#[ignore]
+fn test_day19() -> Result<()> {
+    assert_eq!(
+        run_day(19, advent_of_code_2022::day19::main)?,
+        (1264, Some(13_475))
+    );
+    Ok(())
+}
