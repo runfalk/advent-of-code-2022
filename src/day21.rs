@@ -9,145 +9,163 @@ use std::path::Path;
 static MONKEY_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^([a-z]{4}): (?:(\d+)|([a-z]{4}) ([-+*/]) ([a-z]{4}))$").unwrap());
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Expr {
+#[derive(Debug, Clone)]
+enum ExprRef {
     Scalar(isize),
-    Add(String, String),
-    Sub(String, String),
-    Mul(String, String),
-    Div(String, String),
+    BinOp {
+        op: BinOp,
+        left: String,
+        right: String,
+    },
 }
 
-fn find_monkey_expr<'a>(monkeys: &'a HashMap<String, Expr>, monkey: &str) -> Result<&'a Expr> {
-    monkeys
-        .get(monkey)
-        .ok_or_else(|| anyhow!("No such monkey {:?}", monkey))
+#[derive(Debug, Clone, Copy)]
+enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
 }
 
-impl Expr {
-    fn operands(&self) -> Option<(&str, &str)> {
+#[derive(Debug, Clone)]
+enum Monkey {
+    Scalar {
+        name: String,
+        value: isize,
+    },
+    BinOp {
+        name: String,
+        op: BinOp,
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+}
+
+impl BinOp {
+    fn apply(self, left: &Monkey, right: &Monkey) -> isize {
         match self {
-            Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) | Expr::Div(a, b) => Some((a, b)),
-            Expr::Scalar(_) => None,
+            BinOp::Add => left.eval() + right.eval(),
+            BinOp::Sub => left.eval() - right.eval(),
+            BinOp::Mul => left.eval() * right.eval(),
+            BinOp::Div => left.eval() / right.eval(),
         }
-    }
-
-    fn depends_on(&self, monkeys: &HashMap<String, Expr>, monkey: &str) -> Result<bool> {
-        let Some((a, b)) = self.operands() else {
-            return Ok(false);
-        };
-        if a == monkey || b == monkey {
-            return Ok(true);
-        }
-        let a_expr = find_monkey_expr(monkeys, a)?;
-        let b_expr = find_monkey_expr(monkeys, b)?;
-        Ok(a_expr.depends_on(monkeys, monkey)? || b_expr.depends_on(monkeys, monkey)?)
-    }
-
-    fn eval(&self, monkeys: &HashMap<String, Expr>) -> Result<isize> {
-        Ok(match self {
-            Expr::Scalar(n) => *n,
-            Expr::Add(a, b) => {
-                find_monkey_expr(monkeys, a)?.eval(monkeys)?
-                    + find_monkey_expr(monkeys, b)?.eval(monkeys)?
-            }
-            Expr::Sub(a, b) => {
-                find_monkey_expr(monkeys, a)?.eval(monkeys)?
-                    - find_monkey_expr(monkeys, b)?.eval(monkeys)?
-            }
-            Expr::Mul(a, b) => {
-                find_monkey_expr(monkeys, a)?.eval(monkeys)?
-                    * find_monkey_expr(monkeys, b)?.eval(monkeys)?
-            }
-            Expr::Div(a, b) => {
-                find_monkey_expr(monkeys, a)?.eval(monkeys)?
-                    / find_monkey_expr(monkeys, b)?.eval(monkeys)?
-            }
-        })
     }
 }
 
-fn parse_monkey(s: &str) -> Result<(String, Expr)> {
+impl Monkey {
+    fn depends_on(&self, monkey: &str) -> bool {
+        match self {
+            Monkey::Scalar { name, .. } => name == monkey,
+            Monkey::BinOp {
+                name, left, right, ..
+            } => name == monkey || left.depends_on(monkey) || right.depends_on(monkey),
+        }
+    }
+
+    fn eval(&self) -> isize {
+        match self {
+            Self::Scalar { value, .. } => *value,
+            Self::BinOp {
+                op, left, right, ..
+            } => op.apply(left, right),
+        }
+    }
+}
+
+fn parse_monkey(s: &str) -> Result<(String, ExprRef)> {
     let Some(captures) = MONKEY_RE.captures(s) else {
         return Err(anyhow!("Invalid monkey {:?}", s));
     };
     let expr = if captures.get(2).is_some() {
-        Expr::Scalar(captures[2].parse()?)
+        ExprRef::Scalar(captures[2].parse()?)
     } else {
-        match &captures[4] {
-            "+" => Expr::Add(captures[3].to_string(), captures[5].to_string()),
-            "-" => Expr::Sub(captures[3].to_string(), captures[5].to_string()),
-            "*" => Expr::Mul(captures[3].to_string(), captures[5].to_string()),
-            "/" => Expr::Div(captures[3].to_string(), captures[5].to_string()),
-            _ => unreachable!(),
-        }
+        let op = match &captures[4] {
+            "+" => BinOp::Add,
+            "-" => BinOp::Sub,
+            "*" => BinOp::Mul,
+            "/" => BinOp::Div,
+            _ => unreachable!(), // Unreachable because of the regex
+        };
+        let left = captures[3].to_string();
+        let right = captures[5].to_string();
+        ExprRef::BinOp { op, left, right }
     };
     Ok((captures[1].to_string(), expr))
 }
 
-fn part_a(monkeys: &HashMap<String, Expr>) -> Result<isize> {
-    let Some(expr) = monkeys.get("root") else {
-        return Err(anyhow!("No monkey named root"));
+fn into_monkey_ast<T: Into<String>>(
+    monkeys: &mut HashMap<String, ExprRef>,
+    root: T,
+) -> Result<Box<Monkey>> {
+    // We remove nodes as a validation step to ensure that no monkey's value is used more than once
+    let name = root.into();
+    let Some(expr) = monkeys.remove(&name) else {
+        return Err(anyhow!("No monkey named root, or its value was already used by another monkey"));
     };
-    expr.eval(monkeys)
+
+    Ok(Box::new(match expr {
+        ExprRef::Scalar(value) => Monkey::Scalar { name, value },
+        ExprRef::BinOp { op, left, right } => Monkey::BinOp {
+            name,
+            op,
+            left: into_monkey_ast(monkeys, left)?,
+            right: into_monkey_ast(monkeys, right)?,
+        },
+    }))
 }
 
-fn part_b(monkeys: &HashMap<String, Expr>) -> Result<isize> {
+fn part_b(root_monkey: Monkey) -> Result<isize> {
     // This solution relies on the assumption that each monkey's value is only used once. We use
     // this to treat each monkey as an equation and substitute every monkey into the root one and
     // solve for "humn"
-    let Some(root_expr) = monkeys.get("root") else {
-        return Err(anyhow!("No monkey named root"));
-    };
-    let Some((root_left, root_right)) = root_expr.operands() else {
+    let Monkey::BinOp { name, left, right, .. } = root_monkey else {
         return Err(anyhow!("Expected root monkey to depend on a binary operation"));
     };
-
-    // a - b = 0 means a and b are equal
+    let mut monkey = &Monkey::BinOp {
+        op: BinOp::Sub,
+        name,
+        left,
+        right,
+    };
     let mut static_value = 0;
-    let mut expr = &Expr::Sub(root_left.to_string(), root_right.to_string());
     loop {
-        let Some((left, right)) = expr.operands() else {
-            return Err(anyhow!("Expected monkey to depend on a binary operation"));
+        let (name, op, left, right) = match monkey {
+            Monkey::BinOp {
+                name,
+                op,
+                left,
+                right,
+                ..
+            } => (name, op, left, right),
+            Monkey::Scalar { name, .. } => {
+                if name == "humn" {
+                    return Ok(static_value);
+                } else {
+                    return Err(anyhow!("Expected monkey to depend on a binary operation"));
+                }
+            }
         };
-        let left_expr = find_monkey_expr(monkeys, left)?;
-        let right_expr = find_monkey_expr(monkeys, right)?;
 
-        // Our solution will never work if both the left and right side depends on humn
-        if left_expr.depends_on(monkeys, "humn")? && right_expr.depends_on(monkeys, "humn")? {
-            return Err(anyhow!("humn is depended upon in multiple locations"));
-        }
-
-        if left == "humn" || left_expr.depends_on(monkeys, "humn")? {
-            let right_eval = right_expr.eval(monkeys)?;
-            match expr {
-                Expr::Add(_, _) => static_value -= right_eval,
-                Expr::Sub(_, _) => static_value += right_eval,
-                Expr::Mul(_, _) => static_value /= right_eval,
-                Expr::Div(_, _) => static_value *= right_eval,
-                Expr::Scalar(_) => unreachable!(),
+        if left.depends_on("humn") {
+            match op {
+                BinOp::Add => static_value -= right.eval(),
+                BinOp::Sub => static_value += right.eval(),
+                BinOp::Mul => static_value /= right.eval(),
+                BinOp::Div => static_value *= right.eval(),
             }
-            expr = left_expr;
-            if left == "humn" {
-                return Ok(static_value);
+            monkey = left;
+        } else if right.depends_on("humn") {
+            match op {
+                BinOp::Add => static_value -= left.eval(),
+                BinOp::Sub => static_value = left.eval() - static_value,
+                BinOp::Mul => static_value /= left.eval(),
+                BinOp::Div => static_value = left.eval() / static_value,
             }
-        } else if right == "humn" || right_expr.depends_on(monkeys, "humn")? {
-            let left_eval = left_expr.eval(monkeys)?;
-            match expr {
-                Expr::Add(_, _) => static_value -= left_eval,
-                Expr::Sub(_, _) => static_value = left_eval - static_value,
-                Expr::Mul(_, _) => static_value /= left_eval,
-                Expr::Div(_, _) => static_value = left_eval / static_value,
-                Expr::Scalar(_) => unreachable!(),
-            }
-            expr = right_expr;
-            if right == "humn" {
-                return Ok(static_value);
-            }
+            monkey = right;
         } else {
             return Err(anyhow!(
-                "Monkey with expr {:?} does not depend on the value of humn",
-                expr
+                "Monkey {:?} does not depend on the value of humn",
+                name,
             ));
         };
     }
@@ -155,19 +173,20 @@ fn part_b(monkeys: &HashMap<String, Expr>) -> Result<isize> {
 
 pub fn main(path: &Path) -> Result<(isize, Option<isize>)> {
     let file = File::open(path)?;
-    let monkeys = io::BufReader::new(file)
+    let mut monkeys = io::BufReader::new(file)
         .lines()
         .map(|lr| parse_monkey(&lr?))
         .collect::<Result<HashMap<_, _>>>()?;
-    Ok((part_a(&monkeys)?, Some(part_b(&monkeys)?)))
+    let root_monkey = into_monkey_ast(&mut monkeys, "root")?;
+    Ok((root_monkey.eval(), Some(part_b(*root_monkey)?)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn example_monkeys() -> HashMap<String, Expr> {
-        [
+    fn example_monkeys() -> Monkey {
+        let mut monkeys = [
             "root: pppw + sjmn",
             "dbpl: 5",
             "cczh: sllz + lgvd",
@@ -187,18 +206,19 @@ mod tests {
         .into_iter()
         .map(|l| parse_monkey(l))
         .collect::<Result<HashMap<_, _>>>()
-        .unwrap()
+        .unwrap();
+        *into_monkey_ast(&mut monkeys, "root").unwrap()
     }
 
     #[test]
     fn test_part_a() -> Result<()> {
-        assert_eq!(part_a(&example_monkeys())?, 152);
+        assert_eq!(example_monkeys().eval(), 152);
         Ok(())
     }
 
     #[test]
     fn test_part_b() -> Result<()> {
-        assert_eq!(part_b(&example_monkeys())?, 301);
+        assert_eq!(part_b(example_monkeys())?, 301);
         Ok(())
     }
 }
