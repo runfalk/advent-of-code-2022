@@ -227,3 +227,12 @@ fn test_day24() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn test_day25() -> Result<()> {
+    assert_eq!(
+        run_day(25, advent_of_code_2022::day25::main)?,
+        ("2---1010-0=1220-=010".to_string(), None)
+    );
+    Ok(())
+}
