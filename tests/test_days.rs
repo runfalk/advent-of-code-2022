@@ -216,3 +216,14 @@ fn test_day23() -> Result<()> {
     );
     Ok(())
 }
+
+// Needs to be ignored because my solution is slow :(
+#[test]
+#[ignore]
+fn test_day24() -> Result<()> {
+    assert_eq!(
+        run_day(24, advent_of_code_2022::day24::main)?,
+        (311, Some(869))
+    );
+    Ok(())
+}
